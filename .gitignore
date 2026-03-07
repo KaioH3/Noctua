@@ -1,4 +1,4 @@
-noctua
+/noctua
 *.exe
 *.log
 noctua.json
