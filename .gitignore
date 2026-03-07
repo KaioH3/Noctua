@@ -1,0 +1,4 @@
+noctua
+*.exe
+*.log
+noctua.json
