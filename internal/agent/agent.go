@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"noctua/internal/automaton"
@@ -14,6 +16,8 @@ import (
 	"noctua/internal/monitor"
 	"noctua/internal/notifier"
 )
+
+const maxHistory = 500
 
 type Agent struct {
 	cfg      *config.Config
@@ -26,6 +30,15 @@ type Agent struct {
 	procMon *monitor.ProcessMonitor
 	netMon  *monitor.NetworkMonitor
 	fileMon *monitor.FileMonitor
+
+	// state exposed to dashboard
+	startTime   time.Time
+	history     []event.Event
+	historyMu   sync.RWMutex
+	sseClients  map[chan event.Event]struct{}
+	sseMu       sync.RWMutex
+	totalEvents atomic.Int64
+	learning    atomic.Bool
 }
 
 func New(cfg *config.Config) (*Agent, error) {
@@ -36,34 +49,32 @@ func New(cfg *config.Config) (*Agent, error) {
 		return nil, fmt.Errorf("creating notifier: %w", err)
 	}
 
-	return &Agent{
-		cfg:      cfg,
-		bus:      bus,
-		auto:     automaton.New(cfg.Thresholds),
-		engine:   heuristic.New(),
-		notifier: noti,
-		fw:       firewall.New(),
-		procMon:  monitor.NewProcessMonitor(bus, cfg),
-		netMon:   monitor.NewNetworkMonitor(bus, cfg),
-		fileMon:  monitor.NewFileMonitor(bus, cfg),
-	}, nil
+	a := &Agent{
+		cfg:        cfg,
+		bus:        bus,
+		auto:       automaton.New(cfg.Thresholds),
+		engine:     heuristic.New(),
+		notifier:   noti,
+		fw:         firewall.New(),
+		procMon:    monitor.NewProcessMonitor(bus, cfg),
+		netMon:     monitor.NewNetworkMonitor(bus, cfg),
+		fileMon:    monitor.NewFileMonitor(bus, cfg),
+		startTime:  time.Now(),
+		sseClients: make(map[chan event.Event]struct{}),
+	}
+	a.learning.Store(true)
+	return a, nil
 }
 
 func (a *Agent) Run(ctx context.Context) error {
 	a.printBanner()
 
-	// start monitors
 	go a.procMon.Run(ctx)
 	go a.netMon.Run(ctx)
 	go a.fileMon.Run(ctx)
-
-	// start decay ticker
 	go a.decayLoop(ctx)
-
-	// start transition handler
 	go a.handleTransitions(ctx)
 
-	// learning phase
 	fmt.Printf("\033[33m[*] Learning phase: %d minutes (observing baseline)...\033[0m\n",
 		a.cfg.LearningPeriodMin)
 
@@ -72,6 +83,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.procMon.SetLearning(false)
 		a.netMon.SetLearning(false)
 		a.fileMon.SetLearning(false)
+		a.learning.Store(false)
 		fmt.Printf("\033[32m[+] Learning complete. Baseline: %d processes. Now monitoring.\033[0m\n",
 			a.procMon.KnownCount())
 	case <-ctx.Done():
@@ -79,7 +91,6 @@ func (a *Agent) Run(ctx context.Context) error {
 		return ctx.Err()
 	}
 
-	// main event loop
 	events := a.bus.Subscribe()
 	for {
 		select {
@@ -96,21 +107,17 @@ func (a *Agent) Run(ctx context.Context) error {
 }
 
 func (a *Agent) handleEvent(e event.Event) {
-	// score the event
 	a.engine.Score(&e)
-
-	// skip noise
 	if e.Score <= 0 {
 		return
 	}
 
-	// feed to automaton
+	a.totalEvents.Add(1)
+	a.pushHistory(e)
 	a.auto.Process(e)
-
-	// notify
 	a.notifier.Notify(e)
+	a.broadcastSSE(e)
 
-	// auto-block if configured and entity reaches blocked state
 	if a.cfg.FirewallEnabled {
 		ent := a.auto.GetEntity(e.EntityID)
 		if ent != nil && ent.State == automaton.Blocked {
@@ -124,12 +131,11 @@ func (a *Agent) handleEvent(e event.Event) {
 }
 
 func (a *Agent) handleTransitions(ctx context.Context) {
-	transitions := a.auto.Transitions()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case t, ok := <-transitions:
+		case t, ok := <-a.auto.Transitions():
 			if !ok {
 				return
 			}
@@ -154,6 +160,93 @@ func (a *Agent) decayLoop(ctx context.Context) {
 func (a *Agent) cleanup() {
 	a.notifier.Close()
 	a.bus.Close()
+}
+
+// --- Dashboard Provider methods ---
+
+func (a *Agent) RecentEvents() []event.Event {
+	a.historyMu.RLock()
+	defer a.historyMu.RUnlock()
+	out := make([]event.Event, len(a.history))
+	copy(out, a.history)
+	// newest first
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+func (a *Agent) Entities() []automaton.Entity {
+	return a.auto.Snapshot()
+}
+
+func (a *Agent) SubscribeSSE() (<-chan event.Event, func()) {
+	ch := make(chan event.Event, 64)
+	a.sseMu.Lock()
+	a.sseClients[ch] = struct{}{}
+	a.sseMu.Unlock()
+	return ch, func() {
+		a.sseMu.Lock()
+		delete(a.sseClients, ch)
+		a.sseMu.Unlock()
+	}
+}
+
+func (a *Agent) Uptime() time.Duration       { return time.Since(a.startTime) }
+func (a *Agent) ProcessCount() int            { return a.procMon.KnownCount() }
+func (a *Agent) FilesWatched() int            { return len(a.cfg.WatchedPaths) }
+func (a *Agent) TotalEvents() int64           { return a.totalEvents.Load() }
+func (a *Agent) IsLearning() bool             { return a.learning.Load() }
+
+func (a *Agent) ThreatLevel() string {
+	entities := a.auto.Snapshot()
+	max := automaton.Clean
+	for _, e := range entities {
+		if e.State > max {
+			max = e.State
+		}
+	}
+	switch {
+	case max >= automaton.Threat:
+		return "critical"
+	case max >= automaton.Suspicious:
+		return "high"
+	case max >= automaton.Watching:
+		return "elevated"
+	default:
+		return "safe"
+	}
+}
+
+func (a *Agent) ActiveThreats() int {
+	entities := a.auto.Snapshot()
+	n := 0
+	for _, e := range entities {
+		if e.State >= automaton.Suspicious {
+			n++
+		}
+	}
+	return n
+}
+
+func (a *Agent) broadcastSSE(e event.Event) {
+	a.sseMu.RLock()
+	defer a.sseMu.RUnlock()
+	for ch := range a.sseClients {
+		select {
+		case ch <- e:
+		default:
+		}
+	}
+}
+
+func (a *Agent) pushHistory(e event.Event) {
+	a.historyMu.Lock()
+	defer a.historyMu.Unlock()
+	a.history = append(a.history, e)
+	if len(a.history) > maxHistory {
+		a.history = a.history[1:]
+	}
 }
 
 func (a *Agent) printBanner() {
