@@ -1,0 +1,14 @@
+title: Hosts File Modified
+id: sigma-011
+status: stable
+level: medium
+logsource:
+  category: file_event
+  product: linux
+detection:
+  selection:
+    path: '/etc/hosts'
+  condition: selection
+tags:
+  - attack.defense_evasion
+  - attack.t1565

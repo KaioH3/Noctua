@@ -8,17 +8,19 @@ import (
 	"io/fs"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"noctua/internal/automaton"
+	"noctua/internal/correlator"
 	"noctua/internal/event"
 )
 
 //go:embed templates/* static/*
 var content embed.FS
 
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 type Provider interface {
 	RecentEvents() []event.Event
@@ -31,6 +33,12 @@ type Provider interface {
 	ThreatLevel() string
 	ActiveThreats() int
 	IsLearning() bool
+	CorrelationGraph(pid int32) correlator.GraphSnapshot
+	IntelLookup(ip string) map[string]any
+	RecordFeedback(entityID, ruleName string, isFalsePositive bool)
+	FeedbackStats() map[string]*correlator.FeedbackEntry
+	AnomalyTrained() bool
+	SigmaRuleCount() int
 }
 
 type statsData struct {
@@ -41,6 +49,8 @@ type statsData struct {
 	ActiveThreats int
 	ThreatLevel   string
 	Learning      bool
+	AnomalyReady  bool
+	SigmaRules    int
 }
 
 type pageData struct {
@@ -110,6 +120,29 @@ func NewServer(addr string, provider Provider) (*Server, error) {
 				return fmt.Sprintf("%dh ago", int(d.Hours()))
 			}
 		},
+		"hasPatterns": func(e event.Event) bool {
+			return len(e.Patterns) > 0
+		},
+		"hasSigma": func(e event.Event) bool {
+			return len(e.SigmaRules) > 0
+		},
+		"hasIntel": func(e event.Event) bool {
+			return len(e.ThreatIntel) > 0
+		},
+		"anomalyPct": func(score float64) int {
+			return int(score * 100)
+		},
+		"join": func(s []string) string {
+			return strings.Join(s, ", ")
+		},
+		"intelCountry": func(ti map[string]any) string {
+			if geo, ok := ti["geoip"].(map[string]any); ok {
+				if cc, ok := geo["country_code"].(string); ok {
+					return cc
+				}
+			}
+			return ""
+		},
 	}
 
 	tmplFS, err := fs.Sub(content, "templates")
@@ -136,6 +169,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /partials/entities", s.handleEntitiesPartial)
 	mux.HandleFunc("GET /events/stream", s.handleSSE)
 	mux.HandleFunc("GET /api/status", s.handleAPIStatus)
+	mux.HandleFunc("GET /api/correlations", s.handleCorrelations)
+	mux.HandleFunc("GET /api/intel", s.handleIntel)
+	mux.HandleFunc("POST /api/feedback", s.handleFeedback)
 
 	fmt.Printf("\033[36m[*] Dashboard: http://localhost%s\033[0m\n", s.addr)
 	return http.ListenAndServe(s.addr, mux)
@@ -150,6 +186,8 @@ func (s *Server) getStats() statsData {
 		ActiveThreats: s.provider.ActiveThreats(),
 		ThreatLevel:   s.provider.ThreatLevel(),
 		Learning:      s.provider.IsLearning(),
+		AnomalyReady:  s.provider.AnomalyTrained(),
+		SigmaRules:    s.provider.SigmaRuleCount(),
 	}
 }
 
@@ -202,13 +240,20 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			payload := map[string]any{
-				"time":     evt.Timestamp.Format("15:04:05"),
-				"severity": strings.ToLower(evt.Severity.String()),
-				"label":    evt.Severity.String(),
-				"source":   evt.Source,
-				"message":  evt.Message,
-				"score":    evt.Score,
-				"entity":   evt.EntityID,
+				"time":         evt.Timestamp.Format("15:04:05"),
+				"severity":     strings.ToLower(evt.Severity.String()),
+				"label":        evt.Severity.String(),
+				"source":       evt.Source,
+				"message":      evt.Message,
+				"score":        evt.Score,
+				"entity":       evt.EntityID,
+				"patterns":     evt.Patterns,
+				"sigma_rules":  evt.SigmaRules,
+				"anomaly_score": evt.AnomalyScore,
+				"multiplier":   evt.Multiplier,
+			}
+			if country := extractCountry(evt.ThreatIntel); country != "" {
+				payload["country"] = country
 			}
 			data, _ := json.Marshal(payload)
 			fmt.Fprintf(w, "data: %s\n\n", data)
@@ -229,5 +274,62 @@ func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 		"active_threats": st.ActiveThreats,
 		"threat_level":   st.ThreatLevel,
 		"learning":       st.Learning,
+		"anomaly_ready":  st.AnomalyReady,
+		"sigma_rules":    st.SigmaRules,
 	})
+}
+
+func (s *Server) handleCorrelations(w http.ResponseWriter, r *http.Request) {
+	pidStr := r.URL.Query().Get("pid")
+	pid, err := strconv.ParseInt(pidStr, 10, 32)
+	if err != nil {
+		http.Error(w, "invalid pid parameter", 400)
+		return
+	}
+
+	graph := s.provider.CorrelationGraph(int32(pid))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(graph)
+}
+
+func (s *Server) handleIntel(w http.ResponseWriter, r *http.Request) {
+	ip := r.URL.Query().Get("ip")
+	if ip == "" {
+		http.Error(w, "missing ip parameter", 400)
+		return
+	}
+
+	result := s.provider.IntelLookup(ip)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		EntityID        string `json:"entity_id"`
+		RuleName        string `json:"rule_name"`
+		FalsePositive   bool   `json:"false_positive"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", 400)
+		return
+	}
+
+	s.provider.RecordFeedback(req.EntityID, req.RuleName, req.FalsePositive)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func extractCountry(ti map[string]any) string {
+	if ti == nil {
+		return ""
+	}
+	if geo, ok := ti["geoip"].(map[string]any); ok {
+		if cc, ok := geo["country_code"].(string); ok {
+			return cc
+		}
+	}
+	return ""
 }

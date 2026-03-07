@@ -1,0 +1,20 @@
+title: System Process Name Mimicry
+id: sigma-003
+status: stable
+level: high
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection_sshd:
+    name: 'sshd'
+  filter_sshd:
+    exe|startswith: '/usr/sbin/'
+  selection_systemd:
+    name: 'systemd'
+  filter_systemd:
+    exe|startswith: '/usr/lib/systemd/'
+  condition: (selection_sshd and not filter_sshd) or (selection_systemd and not filter_systemd)
+tags:
+  - attack.defense_evasion
+  - attack.t1036

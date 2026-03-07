@@ -1,0 +1,25 @@
+title: System Enumeration Tools
+id: sigma-015
+status: stable
+level: low
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection:
+    name:
+      - 'whoami'
+      - 'id'
+      - 'uname'
+      - 'hostname'
+      - 'ifconfig'
+      - 'ip'
+      - 'netstat'
+      - 'ss'
+      - 'lsof'
+      - 'ps'
+      - 'cat'
+  condition: selection
+tags:
+  - attack.discovery
+  - attack.t1082

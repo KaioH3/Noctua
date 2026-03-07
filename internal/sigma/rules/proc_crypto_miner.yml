@@ -1,0 +1,21 @@
+title: Potential Crypto Miner Process
+id: sigma-013
+status: stable
+level: medium
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection:
+    name|contains:
+      - 'xmrig'
+      - 'minerd'
+      - 'cpuminer'
+      - 'cgminer'
+      - 'bfgminer'
+      - 'ethminer'
+      - 'stratum'
+  condition: selection
+tags:
+  - attack.impact
+  - attack.t1496

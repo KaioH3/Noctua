@@ -1,0 +1,16 @@
+title: IRC Channel Connection
+id: sigma-005
+status: stable
+level: medium
+logsource:
+  category: network_connection
+  product: linux
+detection:
+  selection:
+    remote_port:
+      - 6667
+      - 6697
+  condition: selection
+tags:
+  - attack.command_and_control
+  - attack.t1071

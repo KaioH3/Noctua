@@ -1,0 +1,31 @@
+title: Potential Reverse Shell Process
+id: sigma-002
+status: stable
+level: high
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection:
+    name:
+      - 'bash'
+      - 'sh'
+      - 'dash'
+      - 'zsh'
+      - 'python'
+      - 'python3'
+      - 'perl'
+      - 'ruby'
+      - 'nc'
+      - 'ncat'
+      - 'socat'
+  filter:
+    exe|startswith:
+      - '/usr/bin/'
+      - '/usr/sbin/'
+      - '/bin/'
+      - '/sbin/'
+  condition: selection
+tags:
+  - attack.execution
+  - attack.t1059

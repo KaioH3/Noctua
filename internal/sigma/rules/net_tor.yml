@@ -1,0 +1,16 @@
+title: Connection to Tor Network Port
+id: sigma-018
+status: stable
+level: high
+logsource:
+  category: network_connection
+  product: linux
+detection:
+  selection:
+    remote_port:
+      - 9050
+      - 9150
+  condition: selection
+tags:
+  - attack.command_and_control
+  - attack.t1090

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"noctua/internal/config"
@@ -43,7 +44,7 @@ func (n *Notifier) Notify(e event.Event) {
 
 	// log to file
 	if n.logFile != nil {
-		line := fmt.Sprintf("[%s] [%s] [%s] %s | entity=%s score=%.1f\n",
+		line := fmt.Sprintf("[%s] [%s] [%s] %s | entity=%s score=%.1f",
 			e.Timestamp.Format(time.RFC3339),
 			e.Severity.String(),
 			e.Source,
@@ -51,6 +52,19 @@ func (n *Notifier) Notify(e event.Event) {
 			e.EntityID,
 			e.Score,
 		)
+		if len(e.Patterns) > 0 {
+			line += fmt.Sprintf(" patterns=%v", e.Patterns)
+		}
+		if len(e.SigmaRules) > 0 {
+			line += fmt.Sprintf(" sigma=%v", e.SigmaRules)
+		}
+		if e.AnomalyScore > 0 {
+			line += fmt.Sprintf(" anomaly=%.2f", e.AnomalyScore)
+		}
+		if e.Multiplier > 1 {
+			line += fmt.Sprintf(" mult=%.1fx", e.Multiplier)
+		}
+		line += "\n"
 		n.logFile.WriteString(line)
 	}
 
@@ -79,6 +93,15 @@ func (n *Notifier) NotifyTransition(entityID string, from, to string, score floa
 func (n *Notifier) desktopNotify(e event.Event) {
 	title := fmt.Sprintf("Noctua [%s]", e.Severity.String())
 	body := e.Message
+	if len(e.Patterns) > 0 {
+		body += fmt.Sprintf(" | Patterns: %s", strings.Join(e.Patterns, ", "))
+	}
+	if len(e.SigmaRules) > 0 {
+		body += fmt.Sprintf(" | Sigma: %s", strings.Join(e.SigmaRules, ", "))
+	}
+	if geo := extractCountryFromIntel(e.ThreatIntel); geo != "" {
+		body += fmt.Sprintf(" | Country: %s", geo)
+	}
 
 	switch runtime.GOOS {
 	case "linux":
@@ -88,21 +111,29 @@ func (n *Notifier) desktopNotify(e event.Event) {
 		}
 		exec.Command("notify-send", "-u", urgency, "-a", "Noctua", title, body).Run()
 	case "darwin":
-		script := fmt.Sprintf(`display notification "%s" with title "%s"`, body, title)
+		sanitize := func(s string) string {
+			return strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), `"`, `\"`)
+		}
+		script := fmt.Sprintf(`display notification "%s" with title "%s"`, sanitize(body), sanitize(title))
 		exec.Command("osascript", "-e", script).Run()
 	}
 }
 
 func (n *Notifier) webhookNotify(e event.Event) {
 	payload := map[string]any{
-		"timestamp": e.Timestamp.Format(time.RFC3339),
-		"severity":  e.Severity.String(),
-		"source":    e.Source,
-		"kind":      e.Kind,
-		"entity_id": e.EntityID,
-		"message":   e.Message,
-		"score":     e.Score,
-		"details":   e.Details,
+		"timestamp":     e.Timestamp.Format(time.RFC3339),
+		"severity":      e.Severity.String(),
+		"source":        e.Source,
+		"kind":          e.Kind,
+		"entity_id":     e.EntityID,
+		"message":       e.Message,
+		"score":         e.Score,
+		"details":       e.Details,
+		"patterns":      e.Patterns,
+		"sigma_rules":   e.SigmaRules,
+		"anomaly_score": e.AnomalyScore,
+		"multiplier":    e.Multiplier,
+		"threat_intel":  e.ThreatIntel,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -111,4 +142,16 @@ func (n *Notifier) webhookNotify(e event.Event) {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	client.Post(n.cfg.NotifyWebhook, "application/json", bytes.NewReader(data))
+}
+
+func extractCountryFromIntel(ti map[string]any) string {
+	if ti == nil {
+		return ""
+	}
+	if geo, ok := ti["geoip"].(map[string]any); ok {
+		if cc, ok := geo["country_code"].(string); ok {
+			return cc
+		}
+	}
+	return ""
 }

@@ -1,0 +1,14 @@
+title: Shadow File Modified
+id: sigma-007
+status: stable
+level: critical
+logsource:
+  category: file_event
+  product: linux
+detection:
+  selection:
+    path: '/etc/shadow'
+  condition: selection
+tags:
+  - attack.credential_access
+  - attack.t1003

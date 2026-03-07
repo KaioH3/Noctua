@@ -1,0 +1,20 @@
+title: Download Tool Execution from Suspicious Path
+id: sigma-016
+status: stable
+level: medium
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection:
+    name:
+      - 'wget'
+      - 'curl'
+  filter:
+    exe|startswith:
+      - '/usr/bin/'
+      - '/usr/sbin/'
+  condition: selection
+tags:
+  - attack.command_and_control
+  - attack.t1105

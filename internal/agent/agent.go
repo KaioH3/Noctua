@@ -8,13 +8,19 @@ import (
 	"sync/atomic"
 	"time"
 
+	"os"
+
+	"noctua/internal/anomaly"
 	"noctua/internal/automaton"
 	"noctua/internal/config"
+	"noctua/internal/correlator"
 	"noctua/internal/event"
 	"noctua/internal/firewall"
 	"noctua/internal/heuristic"
+	"noctua/internal/intel"
 	"noctua/internal/monitor"
 	"noctua/internal/notifier"
+	"noctua/internal/sigma"
 )
 
 const maxHistory = 500
@@ -30,6 +36,14 @@ type Agent struct {
 	procMon *monitor.ProcessMonitor
 	netMon  *monitor.NetworkMonitor
 	fileMon *monitor.FileMonitor
+
+	// v0.2.0 components
+	corr         *correlator.Correlator
+	anomaly      *anomaly.Detector
+	enricher     *intel.Enricher
+	sigmaEngine  *sigma.Engine
+	feedback     *correlator.FeedbackStore
+	sigmaTmpDir  string
 
 	// state exposed to dashboard
 	startTime   time.Time
@@ -59,11 +73,68 @@ func New(cfg *config.Config) (*Agent, error) {
 		procMon:    monitor.NewProcessMonitor(bus, cfg),
 		netMon:     monitor.NewNetworkMonitor(bus, cfg),
 		fileMon:    monitor.NewFileMonitor(bus, cfg),
+		feedback:   correlator.NewFeedbackStore(),
 		startTime:  time.Now(),
 		sseClients: make(map[chan event.Event]struct{}),
 	}
 	a.learning.Store(true)
+
+	// Initialize correlator
+	if cfg.Correlator.Enabled {
+		a.corr = correlator.New(
+			cfg.Correlator.TimeWindowSec,
+			cfg.Correlator.TwoSourceMult,
+			cfg.Correlator.ThreeSourceMult,
+		)
+	}
+
+	// Initialize anomaly detector
+	if cfg.Anomaly.Enabled {
+		a.anomaly = anomaly.NewDetector(cfg.Anomaly.NumTrees, cfg.Anomaly.SampleSize)
+	}
+
+	// Initialize threat intel enricher
+	a.enricher = intel.NewEnricher(cfg.ThreatIntel.CacheTTLMinutes)
+
+	if cfg.ThreatIntel.AbuseIPDBKey != "" {
+		a.enricher.AddProvider(intel.NewAbuseIPDB(cfg.ThreatIntel.AbuseIPDBKey))
+	}
+	if cfg.ThreatIntel.OTXKey != "" {
+		a.enricher.AddProvider(intel.NewOTX(cfg.ThreatIntel.OTXKey))
+	}
+	if cfg.ThreatIntel.GeoIPPath != "" {
+		if geoip, err := intel.NewGeoIP(cfg.ThreatIntel.GeoIPPath); err == nil {
+			a.enricher.AddProvider(geoip)
+		}
+	}
+	a.enricher.AddHashProvider(intel.NewMalwareBazaar())
+
+	// Initialize Sigma rules
+	a.initSigma()
+
 	return a, nil
+}
+
+func (a *Agent) initSigma() {
+	var ruleDirs []string
+
+	// Extract embedded rules to temp dir
+	if tmpDir, err := sigma.ExtractEmbeddedRules(); err == nil {
+		a.sigmaTmpDir = tmpDir
+		ruleDirs = append(ruleDirs, tmpDir)
+	}
+
+	// Add user sigma rules dir
+	if a.cfg.SigmaRulesDir != "" {
+		ruleDirs = append(ruleDirs, a.cfg.SigmaRulesDir)
+	}
+
+	rules, _ := sigma.LoadRules(ruleDirs...)
+	a.sigmaEngine = sigma.NewEngine(rules)
+
+	if len(rules) > 0 {
+		fmt.Printf(" Sigma rules: %d loaded\n", len(rules))
+	}
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -75,6 +146,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	go a.decayLoop(ctx)
 	go a.handleTransitions(ctx)
 
+	if a.corr != nil {
+		go a.corr.StartPruning(ctx)
+	}
+
 	fmt.Printf("\033[33m[*] Learning phase: %d minutes (observing baseline)...\033[0m\n",
 		a.cfg.LearningPeriodMin)
 
@@ -84,6 +159,12 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.netMon.SetLearning(false)
 		a.fileMon.SetLearning(false)
 		a.learning.Store(false)
+
+		// Train anomaly detector after learning phase
+		if a.anomaly != nil {
+			a.anomaly.Train()
+		}
+
 		fmt.Printf("\033[32m[+] Learning complete. Baseline: %d processes. Now monitoring.\033[0m\n",
 			a.procMon.KnownCount())
 	case <-ctx.Done():
@@ -107,14 +188,42 @@ func (a *Agent) Run(ctx context.Context) error {
 }
 
 func (a *Agent) handleEvent(e event.Event) {
+	// 1. Rule-based scoring
 	a.engine.Score(&e)
 	if e.Score <= 0 {
 		return
 	}
 
+	// 2. Cross-correlation + multiplier
+	if a.corr != nil {
+		a.corr.Correlate(&e)
+	}
+
+	// 3. Anomaly detection bonus
+	if a.anomaly != nil {
+		a.anomaly.Evaluate(&e)
+	}
+
+	// 4. Threat intel enrichment
+	if a.enricher != nil {
+		a.enricher.Enrich(&e)
+	}
+
+	// 5. Sigma rule matching
+	if a.sigmaEngine != nil {
+		a.sigmaEngine.Evaluate(&e)
+	}
+
+	// 6. Final severity based on total score
+	e.Severity = heuristic.ClassifySeverity(e.Score)
+
 	a.totalEvents.Add(1)
 	a.pushHistory(e)
+
+	// 7. FSM state tracking
 	a.auto.Process(e)
+
+	// 8. Alerts
 	a.notifier.Notify(e)
 	a.broadcastSSE(e)
 
@@ -160,6 +269,9 @@ func (a *Agent) decayLoop(ctx context.Context) {
 func (a *Agent) cleanup() {
 	a.notifier.Close()
 	a.bus.Close()
+	if a.sigmaTmpDir != "" {
+		os.RemoveAll(a.sigmaTmpDir)
+	}
 }
 
 // --- Dashboard Provider methods ---
@@ -169,7 +281,6 @@ func (a *Agent) RecentEvents() []event.Event {
 	defer a.historyMu.RUnlock()
 	out := make([]event.Event, len(a.history))
 	copy(out, a.history)
-	// newest first
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
@@ -229,6 +340,42 @@ func (a *Agent) ActiveThreats() int {
 	return n
 }
 
+func (a *Agent) CorrelationGraph(pid int32) correlator.GraphSnapshot {
+	if a.corr != nil {
+		return a.corr.GraphForPID(pid)
+	}
+	return correlator.GraphSnapshot{}
+}
+
+func (a *Agent) IntelLookup(ip string) map[string]any {
+	if a.enricher != nil {
+		return a.enricher.LookupIP(ip)
+	}
+	return nil
+}
+
+func (a *Agent) RecordFeedback(entityID, ruleName string, isFalsePositive bool) {
+	a.feedback.RecordFeedback(entityID, ruleName, isFalsePositive)
+}
+
+func (a *Agent) FeedbackStats() map[string]*correlator.FeedbackEntry {
+	return a.feedback.Stats()
+}
+
+func (a *Agent) AnomalyTrained() bool {
+	if a.anomaly != nil {
+		return a.anomaly.IsTrained()
+	}
+	return false
+}
+
+func (a *Agent) SigmaRuleCount() int {
+	if a.sigmaEngine != nil {
+		return a.sigmaEngine.RuleCount()
+	}
+	return 0
+}
+
 func (a *Agent) broadcastSSE(e event.Event) {
 	a.sseMu.RLock()
 	defer a.sseMu.RUnlock()
@@ -257,9 +404,10 @@ func (a *Agent) printBanner() {
 	fmt.Println(` / /|  / /_/ / /__/ /_/ /_/ / /_/ /  `)
 	fmt.Println(`/_/ |_/\____/\___/\__/\__,_/\__,_/   `)
 	fmt.Println()
-	fmt.Printf(" Cybersecurity Automaton Agent v0.1.0\033[0m\n")
+	fmt.Printf(" Cybersecurity Automaton Agent v0.2.0\033[0m\n")
 	fmt.Printf(" Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Printf(" Firewall: %v (enabled=%v)\n", a.fw.Available(), a.cfg.FirewallEnabled)
 	fmt.Printf(" Monitors: process, network, filesystem\n")
+	fmt.Printf(" Correlator: %v | Anomaly: %v\n", a.cfg.Correlator.Enabled, a.cfg.Anomaly.Enabled)
 	fmt.Printf(" Scan interval: %ds\n\n", a.cfg.ScanIntervalSec)
 }

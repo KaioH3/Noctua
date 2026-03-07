@@ -34,11 +34,11 @@ func (eng *Engine) Score(e *event.Event) float64 {
 		total += r.Evaluate(e)
 	}
 	e.Score = total
-	e.Severity = classifySeverity(total)
+	e.Severity = ClassifySeverity(total)
 	return total
 }
 
-func classifySeverity(score float64) event.Severity {
+func ClassifySeverity(score float64) event.Severity {
 	switch {
 	case score >= 70:
 		return event.Critical

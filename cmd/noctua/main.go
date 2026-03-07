@@ -78,6 +78,12 @@ func main() {
 		cancel()
 	}()
 
+	fmt.Println("\033[36m")
+	fmt.Println("  ╔══════════════════════════════════════════╗")
+	fmt.Println("  ║     Noctua — Cybersecurity Automaton     ║")
+	fmt.Println("  ╚══════════════════════════════════════════╝")
+	fmt.Println("\033[0m")
+
 	a, err := agent.New(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating agent: %v\n", err)
@@ -96,7 +102,12 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Web server error: %v\n", err)
 			}
 		}()
+		fmt.Printf("\033[32m  ▸ Dashboard:  http://localhost:%s\033[0m\n", *webPort)
+	} else {
+		fmt.Println("\033[33m  ▸ Dashboard disabled (use -web to enable)\033[0m")
 	}
+	fmt.Printf("  ▸ Scan interval: %ds | Learning: %dm | Firewall: %v\n\n",
+		cfg.ScanIntervalSec, cfg.LearningPeriodMin, cfg.FirewallEnabled)
 
 	if err := a.Run(ctx); err != nil && err != context.Canceled {
 		fmt.Fprintf(os.Stderr, "Agent error: %v\n", err)

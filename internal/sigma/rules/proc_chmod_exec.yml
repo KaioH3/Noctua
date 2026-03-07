@@ -1,0 +1,14 @@
+title: File Permission Change via chmod
+id: sigma-017
+status: stable
+level: low
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection:
+    name: 'chmod'
+  condition: selection
+tags:
+  - attack.defense_evasion
+  - attack.t1222

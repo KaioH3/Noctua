@@ -64,6 +64,11 @@
                                 <span class="event-time">{{fmtTime .Timestamp}}</span>
                                 <span class="event-badge sev-{{sevClass .Severity}}">{{.Severity}}</span>
                                 <span class="event-source">{{.Source}}</span>
+                                {{if hasPatterns .}}{{range .Patterns}}<span class="pattern-badge">{{.}}</span>{{end}}{{end}}
+                                {{if hasSigma .}}{{range .SigmaRules}}<span class="sigma-badge">{{.}}</span>{{end}}{{end}}
+                                {{if gt .AnomalyScore 0.7}}<span class="anomaly-badge">A:{{anomalyPct .AnomalyScore}}%</span>{{end}}
+                                {{if gt .Multiplier 1.0}}<span class="corr-badge">{{printf "%.1fx" .Multiplier}}</span>{{end}}
+                                {{$cc := intelCountry .ThreatIntel}}{{if $cc}}<span class="geo-badge">{{$cc}}</span>{{end}}
                             </div>
                             <div class="event-msg">{{.Message}}</div>
                         </div>
@@ -101,7 +106,7 @@
         <span class="footer-sep">|</span>
         <span>{{.Platform}}</span>
         <span class="footer-sep">|</span>
-        <span>Pure algorithmic intelligence</span>
+        <span>Behavioral anomaly detection + threat intelligence</span>
     </footer>
 
     <script>
@@ -117,6 +122,27 @@
             const empty = document.getElementById('empty-events');
             if (empty) empty.remove();
 
+            let badges = '';
+            if (d.patterns && d.patterns.length) {
+                d.patterns.forEach(function(p) {
+                    badges += '<span class="pattern-badge">' + esc(p) + '</span>';
+                });
+            }
+            if (d.sigma_rules && d.sigma_rules.length) {
+                d.sigma_rules.forEach(function(r) {
+                    badges += '<span class="sigma-badge">' + esc(r) + '</span>';
+                });
+            }
+            if (d.anomaly_score > 0.7) {
+                badges += '<span class="anomaly-badge">A:' + Math.round(d.anomaly_score * 100) + '%</span>';
+            }
+            if (d.multiplier > 1) {
+                badges += '<span class="corr-badge">' + d.multiplier.toFixed(1) + 'x</span>';
+            }
+            if (d.country) {
+                badges += '<span class="geo-badge">' + esc(d.country) + '</span>';
+            }
+
             const el = document.createElement('div');
             el.className = 'event sev-' + d.severity + ' event-enter';
             el.innerHTML =
@@ -126,6 +152,7 @@
                         '<span class="event-time">' + esc(d.time) + '</span>' +
                         '<span class="event-badge sev-' + d.severity + '">' + esc(d.label) + '</span>' +
                         '<span class="event-source">' + esc(d.source) + '</span>' +
+                        badges +
                     '</div>' +
                     '<div class="event-msg">' + esc(d.message) + '</div>' +
                 '</div>' +
@@ -200,6 +227,20 @@
         <div class="stat-body">
             <div class="stat-label">Threat Level</div>
             <div class="stat-value threat-value">{{.ThreatLevel}}{{if .ActiveThreats}} <small>({{.ActiveThreats}})</small>{{end}}</div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-accent accent-orange"></div>
+        <div class="stat-body">
+            <div class="stat-label">Anomaly</div>
+            <div class="stat-value">{{if .AnomalyReady}}ACTIVE{{else}}TRAINING{{end}}</div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-accent accent-purple"></div>
+        <div class="stat-body">
+            <div class="stat-label">Sigma Rules</div>
+            <div class="stat-value">{{.SigmaRules}}</div>
         </div>
     </div>
 </div>

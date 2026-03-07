@@ -1,0 +1,17 @@
+title: Process Started From Suspicious Path
+id: sigma-001
+status: stable
+level: medium
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection:
+    exe|contains:
+      - '/tmp/'
+      - '/var/tmp/'
+      - '/dev/shm/'
+  condition: selection
+tags:
+  - attack.execution
+  - attack.t1059

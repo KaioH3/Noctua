@@ -1,0 +1,20 @@
+title: Connection to Known C2 Port
+id: sigma-004
+status: stable
+level: high
+logsource:
+  category: network_connection
+  product: linux
+detection:
+  selection:
+    remote_port:
+      - 4444
+      - 5555
+      - 6666
+      - 8888
+      - 9999
+      - 1337
+  condition: selection
+tags:
+  - attack.command_and_control
+  - attack.t1571

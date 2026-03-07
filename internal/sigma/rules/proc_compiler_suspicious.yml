@@ -1,0 +1,21 @@
+title: Compiler Execution from Suspicious Path
+id: sigma-019
+status: stable
+level: medium
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection:
+    name:
+      - 'gcc'
+      - 'g++'
+      - 'cc'
+      - 'make'
+    exe|contains:
+      - '/tmp/'
+      - '/dev/shm/'
+  condition: selection
+tags:
+  - attack.execution
+  - attack.t1027

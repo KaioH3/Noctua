@@ -1,0 +1,14 @@
+title: Passwd File Modified
+id: sigma-012
+status: stable
+level: high
+logsource:
+  category: file_event
+  product: linux
+detection:
+  selection:
+    path: '/etc/passwd'
+  condition: selection
+tags:
+  - attack.persistence
+  - attack.t1136

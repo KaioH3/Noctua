@@ -1,0 +1,16 @@
+title: Scheduled Task Creation
+id: sigma-020
+status: stable
+level: medium
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection:
+    name:
+      - 'at'
+      - 'crontab'
+  condition: selection
+tags:
+  - attack.persistence
+  - attack.t1053

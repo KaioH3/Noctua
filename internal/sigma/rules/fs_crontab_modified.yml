@@ -1,0 +1,14 @@
+title: Crontab File Modified
+id: sigma-009
+status: stable
+level: high
+logsource:
+  category: file_event
+  product: linux
+detection:
+  selection:
+    path: '/etc/crontab'
+  condition: selection
+tags:
+  - attack.persistence
+  - attack.t1053

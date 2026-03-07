@@ -1,0 +1,16 @@
+title: Outbound RDP or VNC Connection
+id: sigma-006
+status: stable
+level: medium
+logsource:
+  category: network_connection
+  product: linux
+detection:
+  selection:
+    remote_port:
+      - 3389
+      - 5900
+  condition: selection
+tags:
+  - attack.lateral_movement
+  - attack.t1021

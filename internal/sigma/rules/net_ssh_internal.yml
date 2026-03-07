@@ -1,0 +1,20 @@
+title: SSH Connection to Internal Host
+id: sigma-014
+status: stable
+level: medium
+logsource:
+  category: network_connection
+  product: linux
+detection:
+  selection:
+    remote_port: 22
+    remote_addr|startswith:
+      - '10.'
+      - '192.168.'
+      - '172.16.'
+      - '172.17.'
+      - '172.18.'
+  condition: selection
+tags:
+  - attack.lateral_movement
+  - attack.t1021

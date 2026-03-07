@@ -1,0 +1,14 @@
+title: Sudoers File Modified
+id: sigma-008
+status: stable
+level: critical
+logsource:
+  category: file_event
+  product: linux
+detection:
+  selection:
+    path: '/etc/sudoers'
+  condition: selection
+tags:
+  - attack.privilege_escalation
+  - attack.t1548

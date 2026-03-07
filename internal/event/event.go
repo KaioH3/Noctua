@@ -60,6 +60,14 @@ type Event struct {
 	Score    float64
 	Details  map[string]any
 	Message  string
+
+	// v0.2.0 — correlation, anomaly, intel, sigma
+	CorrelatedWith []string       `json:"correlated_with,omitempty"`
+	Patterns       []string       `json:"patterns,omitempty"`
+	Multiplier     float64        `json:"multiplier,omitempty"`
+	AnomalyScore   float64        `json:"anomaly_score,omitempty"`
+	ThreatIntel    map[string]any `json:"threat_intel,omitempty"`
+	SigmaRules     []string       `json:"sigma_rules,omitempty"`
 }
 
 func (e Event) Format() string {

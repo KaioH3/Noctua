@@ -99,8 +99,8 @@ func (fm *FileMonitor) scan() {
 				EntityID:  fmt.Sprintf("file:%s", path),
 				Details: map[string]any{
 					"path":      path,
-					"prev_hash": prev.Hash[:16] + "...",
-					"new_hash":  current.Hash[:16] + "...",
+					"prev_hash": prev.Hash,
+					"new_hash":  current.Hash,
 					"prev_size": prev.Size,
 					"new_size":  current.Size,
 				},

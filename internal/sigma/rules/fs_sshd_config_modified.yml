@@ -1,0 +1,14 @@
+title: SSHD Config Modified
+id: sigma-010
+status: stable
+level: high
+logsource:
+  category: file_event
+  product: linux
+detection:
+  selection:
+    path: '/etc/ssh/sshd_config'
+  condition: selection
+tags:
+  - attack.persistence
+  - attack.t1098
