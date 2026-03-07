@@ -1,0 +1,235 @@
+{{define "page"}}
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Noctua &mdash; Security Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='10' cy='14' r='5' fill='none' stroke='%2322d3ee' stroke-width='1.5'/%3E%3Ccircle cx='22' cy='14' r='5' fill='none' stroke='%2322d3ee' stroke-width='1.5'/%3E%3Ccircle cx='10' cy='14' r='2' fill='%2322d3ee'/%3E%3Ccircle cx='22' cy='14' r='2' fill='%2322d3ee'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-left">
+            <div class="logo">
+                <svg class="logo-owl" viewBox="0 0 36 32" fill="none">
+                    <circle cx="11" cy="14" r="5.5" stroke="currentColor" stroke-width="1.5"/>
+                    <circle cx="25" cy="14" r="5.5" stroke="currentColor" stroke-width="1.5"/>
+                    <circle cx="11" cy="14" r="2.2" fill="currentColor"/>
+                    <circle cx="25" cy="14" r="2.2" fill="currentColor"/>
+                    <path d="M16 19 L18 23 L20 19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M5.5 8.5 L9 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    <path d="M30.5 8.5 L27 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    <path d="M5.5 8.5 Q18 1 30.5 8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+                </svg>
+                <div class="logo-text">
+                    <span class="logo-name">NOCTUA</span>
+                    <span class="logo-sub">Cybersecurity Automaton</span>
+                </div>
+            </div>
+        </div>
+        <div class="topbar-right">
+            <div class="status-pill {{if .Learning}}learning{{else}}active{{end}}">
+                <span class="status-dot"></span>
+                <span>{{if .Learning}}LEARNING{{else}}MONITORING{{end}}</span>
+            </div>
+            <span class="version-tag">v{{.Version}}</span>
+        </div>
+    </header>
+
+    <main class="dashboard">
+        <section class="stats-section" hx-get="/partials/stats" hx-trigger="every 3s" hx-swap="innerHTML">
+            {{template "stats" .Stats}}
+        </section>
+
+        <div class="content-grid">
+            <section class="panel events-panel">
+                <div class="panel-header">
+                    <h2>
+                        <svg class="panel-icon" viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+                            <path d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.789l1.599.799L9 4.323V3a1 1 0 011-1z"/>
+                        </svg>
+                        Live Events
+                    </h2>
+                    <span class="badge-count" id="event-count">{{len .Events}}</span>
+                </div>
+                <div class="event-feed" id="event-feed">
+                    {{range .Events}}
+                    <div class="event sev-{{sevClass .Severity}}">
+                        <div class="event-dot"></div>
+                        <div class="event-body">
+                            <div class="event-meta">
+                                <span class="event-time">{{fmtTime .Timestamp}}</span>
+                                <span class="event-badge sev-{{sevClass .Severity}}">{{.Severity}}</span>
+                                <span class="event-source">{{.Source}}</span>
+                            </div>
+                            <div class="event-msg">{{.Message}}</div>
+                        </div>
+                        <div class="event-score">{{printf "%.0f" .Score}}</div>
+                    </div>
+                    {{else}}
+                    <div class="empty-state" id="empty-events">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
+                            <path d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round"/>
+                        </svg>
+                        <p>No events yet. Noctua is watching.</p>
+                    </div>
+                    {{end}}
+                </div>
+            </section>
+
+            <section class="panel entities-panel">
+                <div class="panel-header">
+                    <h2>
+                        <svg class="panel-icon" viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+                            <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"/>
+                        </svg>
+                        Tracked Entities
+                    </h2>
+                </div>
+                <div class="entity-list" hx-get="/partials/entities" hx-trigger="every 3s" hx-swap="innerHTML">
+                    {{template "entities" .Entities}}
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="bottombar">
+        <span>Noctua v{{.Version}}</span>
+        <span class="footer-sep">|</span>
+        <span>{{.Platform}}</span>
+        <span class="footer-sep">|</span>
+        <span>Pure algorithmic intelligence</span>
+    </footer>
+
+    <script>
+    (function() {
+        const feed = document.getElementById('event-feed');
+        const counter = document.getElementById('event-count');
+        let count = parseInt(counter.textContent) || 0;
+
+        const src = new EventSource('/events/stream');
+
+        src.onmessage = function(e) {
+            const d = JSON.parse(e.data);
+            const empty = document.getElementById('empty-events');
+            if (empty) empty.remove();
+
+            const el = document.createElement('div');
+            el.className = 'event sev-' + d.severity + ' event-enter';
+            el.innerHTML =
+                '<div class="event-dot"></div>' +
+                '<div class="event-body">' +
+                    '<div class="event-meta">' +
+                        '<span class="event-time">' + esc(d.time) + '</span>' +
+                        '<span class="event-badge sev-' + d.severity + '">' + esc(d.label) + '</span>' +
+                        '<span class="event-source">' + esc(d.source) + '</span>' +
+                    '</div>' +
+                    '<div class="event-msg">' + esc(d.message) + '</div>' +
+                '</div>' +
+                '<div class="event-score">' + Math.round(d.score) + '</div>';
+
+            feed.prepend(el);
+            requestAnimationFrame(function() { el.classList.remove('event-enter'); });
+
+            count++;
+            counter.textContent = count;
+
+            while (feed.children.length > 200) {
+                feed.removeChild(feed.lastChild);
+            }
+        };
+
+        src.onerror = function() {
+            setTimeout(function() { /* auto-reconnects */ }, 1000);
+        };
+
+        function esc(s) {
+            const t = document.createElement('span');
+            t.textContent = s;
+            return t.innerHTML;
+        }
+    })();
+    </script>
+</body>
+</html>
+{{end}}
+
+{{define "stats"}}
+{{if .Learning}}
+<div class="learning-banner">
+    <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+    </svg>
+    Learning baseline &mdash; monitoring will begin shortly
+</div>
+{{end}}
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-accent accent-cyan"></div>
+        <div class="stat-body">
+            <div class="stat-label">Uptime</div>
+            <div class="stat-value">{{fmtUptime .Uptime}}</div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-accent accent-blue"></div>
+        <div class="stat-body">
+            <div class="stat-label">Processes</div>
+            <div class="stat-value">{{.ProcessCount}}</div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-accent accent-purple"></div>
+        <div class="stat-body">
+            <div class="stat-label">Files Watched</div>
+            <div class="stat-value">{{.FilesWatched}}</div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-accent accent-cyan"></div>
+        <div class="stat-body">
+            <div class="stat-label">Total Events</div>
+            <div class="stat-value">{{.TotalEvents}}</div>
+        </div>
+    </div>
+    <div class="stat-card threat-card threat-{{.ThreatLevel}}">
+        <div class="stat-accent accent-threat"></div>
+        <div class="stat-body">
+            <div class="stat-label">Threat Level</div>
+            <div class="stat-value threat-value">{{.ThreatLevel}}{{if .ActiveThreats}} <small>({{.ActiveThreats}})</small>{{end}}</div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "entities"}}
+{{range .}}
+<div class="entity-row">
+    <div class="entity-main">
+        <span class="entity-id">{{truncID .ID}}</span>
+        <div class="entity-tags">
+            <span class="source-tag">{{.Source}}</span>
+            <span class="state-badge state-{{stateClass .State}}">{{.State}}</span>
+        </div>
+    </div>
+    <div class="entity-stats">
+        <div class="score-bar-wrap">
+            <div class="score-bar" style="width:{{scorePct .Score}}%"></div>
+        </div>
+        <span class="entity-score">{{printf "%.0f" .Score}}</span>
+        <span class="entity-events">{{.EventCount}} evt</span>
+        <span class="entity-time">{{relTime .LastEvent}}</span>
+    </div>
+</div>
+{{else}}
+<div class="empty-state">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
+        <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <p>No entities tracked yet</p>
+</div>
+{{end}}
+{{end}}
