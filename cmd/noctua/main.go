@@ -4,12 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"noctua/internal/agent"
 	"noctua/internal/config"
+	"noctua/internal/web"
 )
 
 func main() {
@@ -19,15 +21,19 @@ func main() {
 	learningMin := flag.Int("learning", -1, "override learning period (minutes, 0=skip)")
 	noDesktop := flag.Bool("no-desktop", false, "disable desktop notifications")
 	enableFW := flag.Bool("firewall", false, "enable automatic firewall blocking")
+	webEnabled := flag.Bool("web", false, "enable web dashboard")
+	webPort := flag.String("port", "9000", "web dashboard port")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Noctua — Cybersecurity Automaton Agent\n\n")
 		fmt.Fprintf(os.Stderr, "Usage: noctua [flags]\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nNoctua monitors processes, network connections, and critical files.\n")
-		fmt.Fprintf(os.Stderr, "It uses heuristic scoring and a finite state machine to detect threats.\n")
-		fmt.Fprintf(os.Stderr, "No AI/LLM required — pure algorithmic intelligence.\n")
+		fmt.Fprintf(os.Stderr, "\nExamples:\n")
+		fmt.Fprintf(os.Stderr, "  noctua                        # run with defaults\n")
+		fmt.Fprintf(os.Stderr, "  noctua -web                   # run with dashboard on :9000\n")
+		fmt.Fprintf(os.Stderr, "  noctua -web -port 8080        # dashboard on :8080\n")
+		fmt.Fprintf(os.Stderr, "  noctua -learning 0            # skip learning phase\n")
 	}
 
 	flag.Parse()
@@ -48,7 +54,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// CLI overrides
 	if *scanInterval > 0 {
 		cfg.ScanIntervalSec = *scanInterval
 	}
@@ -62,7 +67,6 @@ func main() {
 		cfg.FirewallEnabled = true
 	}
 
-	// context with signal handling
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -78,6 +82,20 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating agent: %v\n", err)
 		os.Exit(1)
+	}
+
+	if *webEnabled {
+		addr := ":" + *webPort
+		srv, err := web.NewServer(addr, a)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating web server: %v\n", err)
+			os.Exit(1)
+		}
+		go func() {
+			if err := srv.Start(); err != nil && err != http.ErrServerClosed {
+				fmt.Fprintf(os.Stderr, "Web server error: %v\n", err)
+			}
+		}()
 	}
 
 	if err := a.Run(ctx); err != nil && err != context.Canceled {
