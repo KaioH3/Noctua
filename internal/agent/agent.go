@@ -90,7 +90,13 @@ func New(cfg *config.Config) (*Agent, error) {
 
 	// Initialize anomaly detector
 	if cfg.Anomaly.Enabled {
-		a.anomaly = anomaly.NewDetector(cfg.Anomaly.NumTrees, cfg.Anomaly.SampleSize)
+		a.anomaly = anomaly.NewDetector(
+			cfg.Anomaly.NumTrees,
+			cfg.Anomaly.SampleSize,
+			cfg.Anomaly.MaxBuffer,
+			cfg.Anomaly.DriftWindowSize,
+			cfg.Anomaly.DriftThreshold,
+		)
 	}
 
 	// Initialize threat intel enricher
@@ -167,6 +173,12 @@ func (a *Agent) Run(ctx context.Context) error {
 
 		fmt.Printf("\033[32m[+] Learning complete. Baseline: %d processes. Now monitoring.\033[0m\n",
 			a.procMon.KnownCount())
+
+		if a.anomaly != nil && a.cfg.Anomaly.CheckIntervalMin > 0 {
+			fmt.Printf("\033[36m[*] Drift detection: check every %dm | threshold: %.1fσ | FP rate limit: %.0f%%\033[0m\n",
+				a.cfg.Anomaly.CheckIntervalMin, a.cfg.Anomaly.DriftThreshold, a.cfg.Anomaly.FPRateThreshold*100)
+			go a.driftCheckLoop(ctx)
+		}
 	case <-ctx.Done():
 		a.cleanup()
 		return ctx.Err()
@@ -272,6 +284,82 @@ func (a *Agent) cleanup() {
 	if a.sigmaTmpDir != "" {
 		os.RemoveAll(a.sigmaTmpDir)
 	}
+}
+
+func (a *Agent) driftCheckLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Duration(a.cfg.Anomaly.CheckIntervalMin) * time.Minute)
+	defer ticker.Stop()
+
+	var lastFPRetrain time.Time
+	// Suppress FP-triggered retrains for 3x the check interval,
+	// since FP rate data doesn't change from retraining alone.
+	fpCooldown := time.Duration(a.cfg.Anomaly.CheckIntervalMin) * time.Minute * 3
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			drifted := a.anomaly.NeedsRetrain()
+			fpExceeded := a.fpRateExceeded() && time.Since(lastFPRetrain) > fpCooldown
+
+			if !drifted && !fpExceeded {
+				continue
+			}
+
+			var reasons []string
+			if drifted {
+				reasons = append(reasons, fmt.Sprintf("score mean shifted %.1fσ", a.anomaly.DriftMagnitude()))
+			}
+			if fpExceeded {
+				reasons = append(reasons, fmt.Sprintf("FP rate %.0f%%", a.fpRate()*100))
+			}
+
+			reason := reasons[0]
+			if len(reasons) > 1 {
+				reason = reasons[0] + " + " + reasons[1]
+			}
+
+			fmt.Printf("\033[33m[*] Drift detected (%s) — retraining anomaly model...\033[0m\n", reason)
+			n := a.anomaly.Retrain()
+			if n > 0 {
+				fmt.Printf("\033[32m[+] Anomaly model retrained with %d samples\033[0m\n", n)
+			}
+
+			if fpExceeded {
+				lastFPRetrain = time.Now()
+			}
+		}
+	}
+}
+
+const minFPEvents = 10 // need at least 10 feedback events before FP rate is meaningful
+
+func (a *Agent) fpRate() float64 {
+	stats := a.feedback.Stats()
+	var totalFP, totalEvents int
+	for _, entry := range stats {
+		totalFP += entry.FalsePositives
+		totalEvents += entry.TotalEvents
+	}
+	if totalEvents == 0 {
+		return 0
+	}
+	return float64(totalFP) / float64(totalEvents)
+}
+
+func (a *Agent) fpRateExceeded() bool {
+	stats := a.feedback.Stats()
+	var totalFP, totalEvents int
+	for _, entry := range stats {
+		totalFP += entry.FalsePositives
+		totalEvents += entry.TotalEvents
+	}
+	if totalEvents < minFPEvents {
+		return false
+	}
+	fpRate := float64(totalFP) / float64(totalEvents)
+	return fpRate > a.cfg.Anomaly.FPRateThreshold
 }
 
 // --- Dashboard Provider methods ---

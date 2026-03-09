@@ -23,9 +23,14 @@ type CorrelatorConfig struct {
 }
 
 type AnomalyConfig struct {
-	Enabled    bool `json:"enabled"`
-	NumTrees   int  `json:"num_trees"`
-	SampleSize int  `json:"sample_size"`
+	Enabled         bool    `json:"enabled"`
+	NumTrees        int     `json:"num_trees"`
+	SampleSize      int     `json:"sample_size"`
+	MaxBuffer       int     `json:"max_buffer"`
+	DriftThreshold  float64 `json:"drift_threshold"`
+	DriftWindowSize int     `json:"drift_window_size"`
+	FPRateThreshold float64 `json:"fp_rate_threshold"`
+	CheckIntervalMin int    `json:"check_interval_min"`
 }
 
 type ThreatIntelConfig struct {
@@ -58,7 +63,7 @@ func Default() *Config {
 
 	c := &Config{
 		ScanIntervalSec:   10,
-		LearningPeriodMin: 3,
+		LearningPeriodMin: 5,
 		Thresholds: Thresholds{
 			Watching:    15,
 			Suspicious:  35,
@@ -67,15 +72,48 @@ func Default() *Config {
 			DecayPerMin: 5,
 		},
 		SuspiciousPorts: []uint32{
-			4444, 5555, 6666, 8888, 9999, // common C2
-			6667, 6697,                     // IRC
-			1337,                           // leet
-			3389,                           // RDP (outbound is suspicious)
-			5900,                           // VNC (outbound is suspicious)
+			// C2 / backdoor classics
+			4444, 5555, 6666, 8888, 9999,
+			1337, 31337,
+			// IRC (often used by botnets)
+			6667, 6697,
+			// remote desktop outbound (suspicious from workstation)
+			3389, // RDP
+			5900, 5901, 5902, // VNC
+			// SSH outbound (data exfil / tunneling)
+			22,
+			// Metasploit / Cobalt Strike defaults
+			4443, 8443, 50050,
+			// common RAT / trojan ports
+			1234, 12345, 54321,
+			3460,  // backdoor
+			7777,  // backdoor
+			9090,  // common webshell
+			// crypto mining pools
+			3333, 14444, 45700,
+			// SOCKS proxy (potential tunneling)
+			1080, 9050, 9150,
 		},
 		TrustedProcesses: []string{
-			"systemd", "init", "kthreadd", "sshd", "cron",
-			"NetworkManager", "pulseaudio", "pipewire",
+			// system core
+			"systemd", "init", "kthreadd", "sshd", "cron", "crond",
+			"kworker*", "ksoftirqd*", "migration*", "rcu_*",
+			// networking
+			"NetworkManager", "wpa_supplicant", "dhclient", "dhcpcd",
+			"systemd-resolved", "systemd-networkd", "avahi-daemon",
+			// audio / display
+			"pulseaudio", "pipewire", "pipewire-pulse", "wireplumber",
+			"Xorg", "Xwayland", "gnome-shell", "kwin*", "plasmashell",
+			"gdm*", "sddm", "lightdm",
+			// D-Bus / polkit
+			"dbus-daemon", "dbus-broker", "polkitd",
+			// package managers (brief spikes)
+			"apt", "dpkg", "pacman", "dnf", "yum", "zypper", "flatpak",
+			// journaling / logging
+			"systemd-journald", "rsyslogd", "auditd",
+			// misc system
+			"udisksd", "upower", "thermald", "irqbalance",
+			"accounts-daemon", "colord", "fwupd",
 		},
 		NotifyDesktop:   true,
 		LogFile:         "noctua.log",
@@ -87,9 +125,14 @@ func Default() *Config {
 			ThreeSourceMult: 2.5,
 		},
 		Anomaly: AnomalyConfig{
-			Enabled:    true,
-			NumTrees:   100,
-			SampleSize: 256,
+			Enabled:          true,
+			NumTrees:         100,
+			SampleSize:       256,
+			MaxBuffer:        1000,
+			DriftThreshold:   2.0,
+			DriftWindowSize:  200,
+			FPRateThreshold:  0.3,
+			CheckIntervalMin: 5,
 		},
 		ThreatIntel: ThreatIntelConfig{
 			AbuseIPDBKey:    os.Getenv("NOCTUA_ABUSEIPDB_KEY"),
@@ -103,18 +146,43 @@ func Default() *Config {
 	switch runtime.GOOS {
 	case "linux", "darwin":
 		c.WatchedPaths = []string{
+			// authentication & authorization
 			"/etc/passwd",
 			"/etc/shadow",
-			"/etc/crontab",
-			"/etc/ssh/sshd_config",
 			"/etc/sudoers",
+			"/etc/group",
+			"/etc/gshadow",
+			// SSH
+			"/etc/ssh/sshd_config",
+			"/etc/ssh/ssh_config",
+			// scheduled tasks
+			"/etc/crontab",
+			"/etc/cron.d",
+			"/etc/anacrontab",
+			// network & DNS
 			"/etc/hosts",
+			"/etc/resolv.conf",
+			"/etc/nsswitch.conf",
+			// system startup & services
+			"/etc/rc.local",
+			"/etc/environment",
+			"/etc/profile",
+			"/etc/ld.so.preload",
+			// PAM (authentication modules)
+			"/etc/pam.d",
+			// firewall
+			"/etc/iptables",
+			"/etc/nftables.conf",
 		}
 	case "windows":
 		c.WatchedPaths = []string{
 			`C:\Windows\System32\drivers\etc\hosts`,
 			`C:\Windows\System32\config\SAM`,
 			`C:\Windows\System32\config\SYSTEM`,
+			`C:\Windows\System32\config\SECURITY`,
+			`C:\Windows\System32\config\SOFTWARE`,
+			`C:\Windows\Tasks`,
+			`C:\Windows\System32\Tasks`,
 		}
 	}
 
