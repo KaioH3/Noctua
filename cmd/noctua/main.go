@@ -2,27 +2,73 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"syscall"
+
+	flag "github.com/spf13/pflag"
 
 	"noctua/internal/agent"
 	"noctua/internal/config"
 	"noctua/internal/web"
 )
 
+func pidFilePath() string {
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".noctua", "noctua.pid")
+}
+
+func writePIDFile() {
+	path := pidFilePath()
+	os.MkdirAll(filepath.Dir(path), 0755)
+	os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0644)
+}
+
+func removePIDFile() {
+	os.Remove(pidFilePath())
+}
+
+func stopRunning() {
+	data, err := os.ReadFile(pidFilePath())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Noctua is not running (no PID file)")
+		os.Exit(1)
+	}
+
+	pid, err := strconv.Atoi(string(data))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Invalid PID file")
+		os.Remove(pidFilePath())
+		os.Exit(1)
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Process %d not found\n", pid)
+		os.Remove(pidFilePath())
+		os.Exit(1)
+	}
+
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to stop Noctua (PID %d): %v\n", pid, err)
+		os.Remove(pidFilePath())
+		os.Exit(1)
+	}
+
+	fmt.Printf("Noctua (PID %d) stopped.\n", pid)
+	os.Remove(pidFilePath())
+}
+
 func main() {
-	configPath := flag.String("config", "noctua.json", "path to config file")
+	configPath := flag.StringP("config", "c", "noctua.json", "path to config file")
 	genConfig := flag.Bool("gen-config", false, "generate default config and exit")
-	scanInterval := flag.Int("interval", 0, "override scan interval (seconds)")
-	learningMin := flag.Int("learning", -1, "override learning period (minutes, 0=skip)")
-	noDesktop := flag.Bool("no-desktop", false, "disable desktop notifications")
-	enableFW := flag.Bool("firewall", false, "enable automatic firewall blocking")
-	webEnabled := flag.Bool("web", false, "enable web dashboard")
-	webPort := flag.String("port", "9000", "web dashboard port")
+	webEnabled := flag.BoolP("web", "w", false, "enable web dashboard")
+	webPort := flag.StringP("port", "p", "9000", "web dashboard port")
+	stop := flag.Bool("stop", false, "stop a running Noctua instance")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Noctua — Cybersecurity Automaton Agent\n\n")
@@ -30,13 +76,19 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
-		fmt.Fprintf(os.Stderr, "  noctua                        # run with defaults\n")
-		fmt.Fprintf(os.Stderr, "  noctua -web                   # run with dashboard on :9000\n")
-		fmt.Fprintf(os.Stderr, "  noctua -web -port 8080        # dashboard on :8080\n")
-		fmt.Fprintf(os.Stderr, "  noctua -learning 0            # skip learning phase\n")
+		fmt.Fprintf(os.Stderr, "  noctua --gen-config            # generate default config\n")
+		fmt.Fprintf(os.Stderr, "  noctua -w                      # dashboard on :9000\n")
+		fmt.Fprintf(os.Stderr, "  noctua -w -p 8080              # dashboard on :8080\n")
+		fmt.Fprintf(os.Stderr, "  noctua -c prod.json -w         # custom config + dashboard\n")
+		fmt.Fprintf(os.Stderr, "  noctua --stop                  # stop running instance\n")
 	}
 
 	flag.Parse()
+
+	if *stop {
+		stopRunning()
+		return
+	}
 
 	if *genConfig {
 		cfg := config.Default()
@@ -54,18 +106,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *scanInterval > 0 {
-		cfg.ScanIntervalSec = *scanInterval
-	}
-	if *learningMin >= 0 {
-		cfg.LearningPeriodMin = *learningMin
-	}
-	if *noDesktop {
-		cfg.NotifyDesktop = false
-	}
-	if *enableFW {
-		cfg.FirewallEnabled = true
-	}
+	writePIDFile()
+	defer removePIDFile()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -104,7 +146,7 @@ func main() {
 		}()
 		fmt.Printf("\033[32m  ▸ Dashboard:  http://localhost:%s\033[0m\n", *webPort)
 	} else {
-		fmt.Println("\033[33m  ▸ Dashboard disabled (use -web to enable)\033[0m")
+		fmt.Println("\033[33m  ▸ Dashboard disabled (use --web to enable)\033[0m")
 	}
 	fmt.Printf("  ▸ Scan interval: %ds | Learning: %dm | Firewall: %v\n\n",
 		cfg.ScanIntervalSec, cfg.LearningPeriodMin, cfg.FirewallEnabled)

@@ -27,18 +27,20 @@ type NetworkMonitor struct {
 	learning bool
 
 	// rate tracking per PID
-	connCounts map[int32]int
-	lastReset  time.Time
+	connCounts  map[int32]int
+	rateAlerted map[int32]bool // already emitted high_conn_rate this period
+	lastReset   time.Time
 }
 
 func NewNetworkMonitor(bus *event.Bus, cfg *config.Config) *NetworkMonitor {
 	return &NetworkMonitor{
-		bus:        bus,
-		cfg:        cfg,
-		known:      make(map[connKey]time.Time),
-		connCounts: make(map[int32]int),
-		lastReset:  time.Now(),
-		learning:   true,
+		bus:         bus,
+		cfg:         cfg,
+		known:       make(map[connKey]time.Time),
+		connCounts:  make(map[int32]int),
+		rateAlerted: make(map[int32]bool),
+		lastReset:   time.Now(),
+		learning:    true,
 	}
 }
 
@@ -76,6 +78,7 @@ func (nm *NetworkMonitor) scan() {
 	// reset rate counter every minute
 	if time.Since(nm.lastReset) > time.Minute {
 		nm.connCounts = make(map[int32]int)
+		nm.rateAlerted = make(map[int32]bool)
 		nm.lastReset = time.Now()
 	}
 	nm.mu.Unlock()
@@ -131,20 +134,30 @@ func (nm *NetworkMonitor) scan() {
 			continue
 		}
 
-		// check for high connection rate
+		// check for high connection rate (emit once per PID per reset period)
 		if connCount > 20 {
-			nm.bus.Publish(event.Event{
-				Timestamp: now,
-				Source:    "network",
-				Kind:     "high_conn_rate",
-				EntityID:  fmt.Sprintf("net:rate:%d", c.Pid),
-				Details: map[string]any{
-					"pid":   c.Pid,
-					"count": connCount,
-				},
-				Message: fmt.Sprintf("High connection rate: PID %d has %d connections/min",
-					c.Pid, connCount),
-			})
+			nm.mu.Lock()
+			alerted := nm.rateAlerted[c.Pid]
+			nm.mu.Unlock()
+
+			if !alerted {
+				nm.mu.Lock()
+				nm.rateAlerted[c.Pid] = true
+				nm.mu.Unlock()
+
+				nm.bus.Publish(event.Event{
+					Timestamp: now,
+					Source:    "network",
+					Kind:     "high_conn_rate",
+					EntityID:  fmt.Sprintf("net:rate:%d", c.Pid),
+					Details: map[string]any{
+						"pid":   c.Pid,
+						"count": connCount,
+					},
+					Message: fmt.Sprintf("High connection rate: PID %d has %d connections/min",
+						c.Pid, connCount),
+				})
+			}
 			continue
 		}
 

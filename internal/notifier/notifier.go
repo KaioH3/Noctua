@@ -116,6 +116,28 @@ func (n *Notifier) desktopNotify(e event.Event) {
 		}
 		script := fmt.Sprintf(`display notification "%s" with title "%s"`, sanitize(body), sanitize(title))
 		exec.Command("osascript", "-e", script).Run()
+	case "windows":
+		psTitle := strings.ReplaceAll(title, "'", "''")
+		psBody := strings.ReplaceAll(body, "'", "''")
+		script := fmt.Sprintf(`
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType=WindowsRuntime] | Out-Null
+$xml = @'
+<toast>
+  <visual>
+    <binding template="ToastGeneric">
+      <text>%s</text>
+      <text>%s</text>
+    </binding>
+  </visual>
+</toast>
+'@
+$doc = New-Object Windows.Data.Xml.Dom.XmlDocument
+$doc.LoadXml($xml)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Noctua').Show(
+    [Windows.UI.Notifications.ToastNotification]::new($doc)
+)`, psTitle, psBody)
+		exec.Command("powershell", "-NoProfile", "-Command", script).Run()
 	}
 }
 

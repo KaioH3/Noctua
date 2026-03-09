@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,7 +130,11 @@ func (pm *ProcessMonitor) scan() {
 
 func (pm *ProcessMonitor) isTrusted(name string) bool {
 	for _, t := range pm.cfg.TrustedProcesses {
-		if name == t {
+		if strings.HasSuffix(t, "*") {
+			if strings.HasPrefix(name, t[:len(t)-1]) {
+				return true
+			}
+		} else if name == t {
 			return true
 		}
 	}
