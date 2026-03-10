@@ -7,7 +7,7 @@ Monitors processes, network connections, and filesystem changes. Detects threats
 > **[Leia em Português](#documentação-em-português)** — Full Portuguese documentation below.
 
 [![CI](https://github.com/KaioH3/noctua/actions/workflows/ci.yml/badge.svg)](https://github.com/KaioH3/noctua/actions/workflows/ci.yml)
-[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-333)]()
 [![Tests](https://img.shields.io/badge/tests-93%20passed-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
