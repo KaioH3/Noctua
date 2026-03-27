@@ -22,6 +22,7 @@ func New() *Engine {
 	eng.registerProcessRules()
 	eng.registerNetworkRules()
 	eng.registerFilesystemRules()
+	eng.registerResourceRules()
 	return eng
 }
 
@@ -104,6 +105,43 @@ func (eng *Engine) registerProcessRules() {
 			},
 		},
 		Rule{
+			Name:   "privilege_escalation",
+			Source: "process",
+			Evaluate: func(e *event.Event) float64 {
+				name, _ := e.Details["name"].(string)
+				exe, _ := e.Details["exe"].(string)
+				// su/sudo spawned from unexpected parent context
+				privTools := []string{"su", "sudo", "pkexec", "runuser", "newgrp"}
+				for _, t := range privTools {
+					if name == t || strings.HasSuffix(exe, "/"+t) {
+						return 20
+					}
+				}
+				return 0
+			},
+		},
+		Rule{
+			Name:   "scripting_from_temp",
+			Source: "process",
+			Evaluate: func(e *event.Event) float64 {
+				exe, _ := e.Details["exe"].(string)
+				name, _ := e.Details["name"].(string)
+				scripts := []string{"bash", "sh", "python", "python3", "perl", "ruby", "node"}
+				tempPaths := []string{"/tmp/", "/var/tmp/", "/dev/shm/"}
+				for _, s := range scripts {
+					if name != s {
+						continue
+					}
+					for _, p := range tempPaths {
+						if strings.Contains(exe, p) {
+							return 35
+						}
+					}
+				}
+				return 0
+			},
+		},
+		Rule{
 			Name:   "high_entropy_name",
 			Source: "process",
 			Evaluate: func(e *event.Event) float64 {
@@ -157,6 +195,22 @@ func (eng *Engine) registerNetworkRules() {
 				return 0
 			},
 		},
+		Rule{
+			Name:   "port_scan",
+			Source: "network",
+			Evaluate: func(e *event.Event) float64 {
+				if e.Kind == "port_scan" {
+					ports, _ := e.Details["unique_ports"].(int)
+					if ports > 50 {
+						return 70
+					}
+					if ports > 20 {
+						return 45
+					}
+				}
+				return 0
+			},
+		},
 	)
 }
 
@@ -190,6 +244,51 @@ func (eng *Engine) registerFilesystemRules() {
 					if count > 10 {
 						return 70 // possible ransomware
 					}
+				}
+				return 0
+			},
+		},
+	)
+}
+
+// --- Resource Rules ---
+
+func (eng *Engine) registerResourceRules() {
+	eng.rules = append(eng.rules,
+		Rule{
+			Name:   "cpu_abuse",
+			Source: "resource",
+			Evaluate: func(e *event.Event) float64 {
+				if e.Kind == "cpu_abuse" {
+					cpuPct, _ := e.Details["cpu_pct"].(float64)
+					if cpuPct >= 95 {
+						return 50
+					}
+					return 40
+				}
+				return 0
+			},
+		},
+		Rule{
+			Name:   "memory_abuse",
+			Source: "resource",
+			Evaluate: func(e *event.Event) float64 {
+				if e.Kind == "memory_abuse" {
+					return 30
+				}
+				return 0
+			},
+		},
+		Rule{
+			Name:   "spawn_loop",
+			Source: "process",
+			Evaluate: func(e *event.Event) float64 {
+				if e.Kind == "spawn_loop" {
+					count, _ := e.Details["child_count"].(int)
+					if count > 20 {
+						return 60
+					}
+					return 50
 				}
 				return 0
 			},

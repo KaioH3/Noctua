@@ -1,5 +1,10 @@
 /noctua
+noctua-linux-*
 *.exe
 *.log
 noctua.json
+noctua-server.json
+noctua.service
 resume.txt
+playbook.md
+linkedin-*.txt

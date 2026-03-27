@@ -294,6 +294,67 @@ func (p *beaconingPattern) Match(nodes []*Node) *PatternMatch {
 	return nil
 }
 
+// spawnLoopPattern fires when the same PID has both a spawn_loop process event
+// and a cpu_abuse resource event — the combination indicates a runaway fork.
+// Spawn-loop events are identified by the presence of "child_count" in Details;
+// cpu_abuse events by the presence of "cpu_pct" in Details.
+type spawnLoopPattern struct{}
+
+func (p *spawnLoopPattern) Name() string { return "runaway_fork" }
+func (p *spawnLoopPattern) Match(nodes []*Node) *PatternMatch {
+	spawnPIDs := make(map[int32]bool)
+	cpuPIDs := make(map[int32]bool)
+
+	for _, n := range nodes {
+		pid, ok := getPID(n)
+		if !ok {
+			continue
+		}
+		if n.Source == "process" {
+			if _, hasChildCount := n.Details["child_count"]; hasChildCount {
+				spawnPIDs[pid] = true
+			}
+		}
+		if n.Source == "resource" {
+			if _, hasCPU := n.Details["cpu_pct"]; hasCPU {
+				cpuPIDs[pid] = true
+			}
+		}
+	}
+
+	for pid := range cpuPIDs {
+		if spawnPIDs[pid] {
+			return &PatternMatch{Name: "runaway_fork", Bonus: 45}
+		}
+	}
+	return nil
+}
+
+// sshBruteForcePattern fires when many network connections to port 22 originate
+// from many different source PIDs in the correlation window — inbound brute force.
+type sshBruteForcePattern struct{}
+
+func (p *sshBruteForcePattern) Name() string { return "ssh_brute_force" }
+func (p *sshBruteForcePattern) Match(nodes []*Node) *PatternMatch {
+	sshConns := 0
+	for _, n := range nodes {
+		if n.Source != "network" {
+			continue
+		}
+		port, ok := getPort(n)
+		if !ok {
+			continue
+		}
+		if port == 22 {
+			sshConns++
+		}
+	}
+	if sshConns >= 5 {
+		return &PatternMatch{Name: "ssh_brute_force", Bonus: 55}
+	}
+	return nil
+}
+
 func AllPatterns(tracker *beaconTracker) []PatternMatcher {
 	return []PatternMatcher{
 		&reverseShellPattern{},
@@ -302,7 +363,29 @@ func AllPatterns(tracker *beaconTracker) []PatternMatcher {
 		&lateralMovementPattern{},
 		&cryptoMinerPattern{},
 		&beaconingPattern{tracker: tracker},
+		&spawnLoopPattern{},
+		&sshBruteForcePattern{},
 	}
+}
+
+func getPID(n *Node) (int32, bool) {
+	if pid, ok := n.Details["pid"].(int32); ok {
+		return pid, true
+	}
+	if pidf, ok := n.Details["pid"].(float64); ok {
+		return int32(pidf), true
+	}
+	return 0, false
+}
+
+func getPort(n *Node) (uint32, bool) {
+	if port, ok := n.Details["remote_port"].(uint32); ok {
+		return port, true
+	}
+	if portf, ok := n.Details["remote_port"].(float64); ok {
+		return uint32(portf), true
+	}
+	return 0, false
 }
 
 // --- helpers ---

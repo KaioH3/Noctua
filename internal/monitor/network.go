@@ -30,6 +30,10 @@ type NetworkMonitor struct {
 	connCounts  map[int32]int
 	rateAlerted map[int32]bool // already emitted high_conn_rate this period
 	lastReset   time.Time
+
+	// port-scan detection: unique destination ports per PID in reset window
+	portSets      map[int32]map[uint32]bool
+	scanAlerted   map[int32]bool
 }
 
 func NewNetworkMonitor(bus *event.Bus, cfg *config.Config) *NetworkMonitor {
@@ -39,6 +43,8 @@ func NewNetworkMonitor(bus *event.Bus, cfg *config.Config) *NetworkMonitor {
 		known:       make(map[connKey]time.Time),
 		connCounts:  make(map[int32]int),
 		rateAlerted: make(map[int32]bool),
+		portSets:    make(map[int32]map[uint32]bool),
+		scanAlerted: make(map[int32]bool),
 		lastReset:   time.Now(),
 		learning:    true,
 	}
@@ -75,10 +81,12 @@ func (nm *NetworkMonitor) scan() {
 	nm.mu.Lock()
 	learning := nm.learning
 
-	// reset rate counter every minute
+	// reset rate counters every minute
 	if time.Since(nm.lastReset) > time.Minute {
 		nm.connCounts = make(map[int32]int)
 		nm.rateAlerted = make(map[int32]bool)
+		nm.portSets = make(map[int32]map[uint32]bool)
+		nm.scanAlerted = make(map[int32]bool)
 		nm.lastReset = time.Now()
 	}
 	nm.mu.Unlock()
@@ -109,10 +117,37 @@ func (nm *NetworkMonitor) scan() {
 		nm.known[key] = now
 		nm.connCounts[c.Pid]++
 		connCount := nm.connCounts[c.Pid]
+		// Track unique destination ports per PID for port-scan detection.
+		if nm.portSets[c.Pid] == nil {
+			nm.portSets[c.Pid] = make(map[uint32]bool)
+		}
+		nm.portSets[c.Pid][c.Raddr.Port] = true
+		uniquePorts := len(nm.portSets[c.Pid])
+		scanAlerted := nm.scanAlerted[c.Pid]
 		nm.mu.Unlock()
 
 		if exists || learning {
 			continue
+		}
+
+		// Port scan: single PID connecting to many distinct ports in 1 minute.
+		if uniquePorts >= 20 && !scanAlerted {
+			nm.mu.Lock()
+			nm.scanAlerted[c.Pid] = true
+			nm.mu.Unlock()
+
+			nm.bus.Publish(event.Event{
+				Timestamp: now,
+				Source:    "network",
+				Kind:      "port_scan",
+				EntityID:  fmt.Sprintf("net:scan:%d", c.Pid),
+				Details: map[string]any{
+					"pid":          c.Pid,
+					"unique_ports": uniquePorts,
+				},
+				Message: fmt.Sprintf("Port scan: PID %d connected to %d distinct ports/min",
+					c.Pid, uniquePorts),
+			})
 		}
 
 		// check for suspicious remote port

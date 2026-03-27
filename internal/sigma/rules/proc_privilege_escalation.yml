@@ -1,0 +1,18 @@
+title: Privilege Escalation Attempt
+id: sigma-023
+status: stable
+level: high
+logsource:
+  category: process_creation
+detection:
+  selection:
+    ProcessName:
+      - su
+      - sudo
+      - pkexec
+      - runuser
+      - newgrp
+  condition: selection
+tags:
+  - attack.privilege_escalation
+  - attack.t1548

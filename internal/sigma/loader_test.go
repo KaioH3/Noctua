@@ -81,8 +81,8 @@ func TestExtractEmbeddedRules(t *testing.T) {
 		t.Fatalf("failed to read tmpDir: %v", err)
 	}
 
-	if len(entries) != 20 {
-		t.Errorf("expected 20 embedded rules, got %d", len(entries))
+	if len(entries) != 25 {
+		t.Errorf("expected 25 embedded rules, got %d", len(entries))
 	}
 
 	// Verify they're valid YAML that loads
@@ -90,7 +90,7 @@ func TestExtractEmbeddedRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRules on embedded rules failed: %v", err)
 	}
-	if len(rules) != 20 {
-		t.Errorf("expected 20 loaded rules, got %d", len(rules))
+	if len(rules) != 25 {
+		t.Errorf("expected 25 loaded rules, got %d", len(rules))
 	}
 }

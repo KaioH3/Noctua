@@ -10,6 +10,7 @@ import (
 
 	"os"
 
+	"noctua/internal/action"
 	"noctua/internal/anomaly"
 	"noctua/internal/automaton"
 	"noctua/internal/config"
@@ -36,6 +37,8 @@ type Agent struct {
 	procMon *monitor.ProcessMonitor
 	netMon  *monitor.NetworkMonitor
 	fileMon *monitor.FileMonitor
+	resMon  *monitor.ResourceMonitor
+	actor   *action.Actor
 
 	// v0.2.0 components
 	corr         *correlator.Correlator
@@ -78,6 +81,11 @@ func New(cfg *config.Config) (*Agent, error) {
 		sseClients: make(map[chan event.Event]struct{}),
 	}
 	a.learning.Store(true)
+
+	if cfg.ResourceGuard.Enabled {
+		a.resMon = monitor.NewResourceMonitor(bus, cfg)
+		a.actor = action.New(&cfg.ResourceGuard)
+	}
 
 	// Initialize correlator
 	if cfg.Correlator.Enabled {
@@ -154,6 +162,11 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	if a.corr != nil {
 		go a.corr.StartPruning(ctx)
+	}
+
+	// Resource guard runs immediately — no learning phase needed.
+	if a.resMon != nil {
+		go a.resMon.Run(ctx)
 	}
 
 	fmt.Printf("\033[33m[*] Learning phase: %d minutes (observing baseline)...\033[0m\n",
@@ -246,6 +259,18 @@ func (a *Agent) handleEvent(e event.Event) {
 				if err := a.fw.BlockIP(ip); err == nil {
 					fmt.Printf("\033[1;31m[!] AUTO-BLOCK: %s blocked via firewall\033[0m\n", ip)
 				}
+			}
+		}
+	}
+
+	// 8. Resource Guard action (renice / kill when enabled).
+	if a.actor != nil {
+		switch e.Kind {
+		case "cpu_abuse", "memory_abuse", "spawn_loop":
+			pid, _ := e.Details["pid"].(int32)
+			name, _ := e.Details["name"].(string)
+			if pid > 0 && name != "" {
+				a.actor.Handle(pid, name, e.Kind)
 			}
 		}
 	}
@@ -492,10 +517,16 @@ func (a *Agent) printBanner() {
 	fmt.Println(` / /|  / /_/ / /__/ /_/ /_/ / /_/ /  `)
 	fmt.Println(`/_/ |_/\____/\___/\__/\__,_/\__,_/   `)
 	fmt.Println()
-	fmt.Printf(" Cybersecurity Automaton Agent v0.2.0\033[0m\n")
+	fmt.Printf(" Cybersecurity Automaton Agent v0.3.0\033[0m\n")
 	fmt.Printf(" Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Printf(" Firewall: %v (enabled=%v)\n", a.fw.Available(), a.cfg.FirewallEnabled)
-	fmt.Printf(" Monitors: process, network, filesystem\n")
+	fmt.Printf(" Monitors: process, network, filesystem, resource\n")
 	fmt.Printf(" Correlator: %v | Anomaly: %v\n", a.cfg.Correlator.Enabled, a.cfg.Anomaly.Enabled)
+	rg := a.cfg.ResourceGuard
+	if rg.Enabled {
+		fmt.Printf(" Resource Guard: action=%s | cpu>%.0f%% for %ds | mem>%dMB | spawns>%d/%ds\n",
+			rg.Action, rg.CPUThreshold, rg.SustainedSeconds,
+			rg.MemoryThresholdMB, rg.SpawnLoopLimit, rg.SpawnLoopWindow)
+	}
 	fmt.Printf(" Scan interval: %ds\n\n", a.cfg.ScanIntervalSec)
 }

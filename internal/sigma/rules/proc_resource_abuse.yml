@@ -1,0 +1,15 @@
+title: Process Sustained CPU Abuse
+id: sigma-021
+status: stable
+level: high
+logsource:
+  category: resource_event
+detection:
+  selection:
+    kind:
+      - cpu_abuse
+      - memory_abuse
+  condition: selection
+tags:
+  - attack.impact
+  - attack.t1499

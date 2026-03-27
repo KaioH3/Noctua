@@ -1,0 +1,13 @@
+title: Process Spawn Loop Detected
+id: sigma-022
+status: stable
+level: high
+logsource:
+  category: process_creation
+detection:
+  selection:
+    kind: spawn_loop
+  condition: selection
+tags:
+  - attack.execution
+  - attack.t1055

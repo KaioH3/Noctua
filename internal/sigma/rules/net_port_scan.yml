@@ -1,0 +1,13 @@
+title: Internal Port Scan Detected
+id: sigma-024
+status: stable
+level: high
+logsource:
+  category: network_connection
+detection:
+  selection:
+    kind: port_scan
+  condition: selection
+tags:
+  - attack.discovery
+  - attack.t1046

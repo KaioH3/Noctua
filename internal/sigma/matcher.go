@@ -26,6 +26,7 @@ var categoryMapping = map[string]string{
 	"process_creation":    "process",
 	"network_connection":  "network",
 	"file_event":          "filesystem",
+	"resource_event":      "resource",
 }
 
 type Engine struct {

@@ -40,6 +40,18 @@ type ThreatIntelConfig struct {
 	CacheTTLMinutes int    `json:"cache_ttl_minutes"`
 }
 
+type ResourceGuardConfig struct {
+	Enabled           bool     `json:"enabled"`
+	CPUThreshold      float64  `json:"cpu_threshold"`
+	MemoryThresholdMB uint64   `json:"memory_threshold_mb"`
+	SustainedSeconds  int      `json:"sustained_seconds"`
+	Action            string   `json:"action"` // "notify" | "renice" | "kill"
+	ReniceValue       int      `json:"renice_value"`
+	ExemptProcesses   []string `json:"exempt_processes"`
+	SpawnLoopWindow   int      `json:"spawn_loop_window_sec"`
+	SpawnLoopLimit    int      `json:"spawn_loop_limit"`
+}
+
 type Config struct {
 	ScanIntervalSec    int        `json:"scan_interval_seconds"`
 	LearningPeriodMin  int        `json:"learning_period_minutes"`
@@ -52,10 +64,11 @@ type Config struct {
 	LogFile            string     `json:"log_file"`
 	FirewallEnabled    bool       `json:"firewall_enabled"`
 
-	Correlator    CorrelatorConfig  `json:"correlator"`
-	Anomaly       AnomalyConfig     `json:"anomaly"`
-	ThreatIntel   ThreatIntelConfig `json:"threat_intel"`
-	SigmaRulesDir string            `json:"sigma_rules_dir,omitempty"`
+	Correlator    CorrelatorConfig    `json:"correlator"`
+	Anomaly       AnomalyConfig       `json:"anomaly"`
+	ThreatIntel   ThreatIntelConfig   `json:"threat_intel"`
+	ResourceGuard ResourceGuardConfig `json:"resource_guard"`
+	SigmaRulesDir string              `json:"sigma_rules_dir,omitempty"`
 }
 
 func Default() *Config {
@@ -114,6 +127,10 @@ func Default() *Config {
 			// misc system
 			"udisksd", "upower", "thermald", "irqbalance",
 			"accounts-daemon", "colord", "fwupd",
+			// dev tools (suppress new-process noise; resource guard still watches them)
+			"code", "code-oss", "node", "npm", "npx",
+			"python3", "python", "go", "cargo", "rustc", "java", "gradle",
+			"chrome", "chromium", "firefox", "brave-browser", "agent-browser",
 		},
 		NotifyDesktop:   true,
 		LogFile:         "noctua.log",
@@ -139,6 +156,17 @@ func Default() *Config {
 			GeoIPPath:       filepath.Join(homeDir, ".noctua", "GeoLite2-City.mmdb"),
 			OTXKey:          os.Getenv("NOCTUA_OTX_KEY"),
 			CacheTTLMinutes: 1440,
+		},
+		ResourceGuard: ResourceGuardConfig{
+			Enabled:           true,
+			CPUThreshold:      85.0,
+			MemoryThresholdMB: 4096,
+			SustainedSeconds:  30,
+			Action:            "notify",
+			ReniceValue:       19,
+			ExemptProcesses:   []string{"systemd", "init", "kthreadd", "sshd", "kwin*", "plasmashell", "gnome-shell"},
+			SpawnLoopWindow:   60,
+			SpawnLoopLimit:    10,
 		},
 		SigmaRulesDir: filepath.Join(homeDir, ".noctua", "sigma"),
 	}
